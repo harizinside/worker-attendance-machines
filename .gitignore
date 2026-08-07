@@ -1,0 +1,11 @@
+config.json
+attendance.db
+attendance.db-wal
+attendance.db-shm
+dist/
+build/
+*.spec
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
