@@ -5,19 +5,32 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v9
 
       - run: uv sync --group dev
 
       - run: uv run pyinstaller --onefile --name attendance-agent agent.py
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: attendance-agent-windows
           path: dist/attendance-agent.exe
+
+      - name: Publish rolling "latest" release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>$null
+          gh release create latest dist/attendance-agent.exe `
+            --title "Latest build" `
+            --notes "Automatic build from main (commit ${{ github.sha }})"
