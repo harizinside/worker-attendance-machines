@@ -192,9 +192,20 @@ Hasilnya ada di `dist\attendance-agent.exe`.
 
 ### Cara pakai `.exe`
 
-Taruh `attendance-agent.exe` satu folder dengan `config.json` (path
-`config.json`/`db_path` di-resolve relatif ke working directory, sama
-seperti versi `uv run`). Jalankan dari `cmd`/PowerShell:
+`config.json`/`db_path` di-resolve relatif ke *working directory* saat exe
+dijalankan (sama seperti versi `uv run`) — jadi taruh `attendance-agent.exe`
+dan `config.json` di folder yang sama, misalnya:
+
+```
+C:\AttendanceAgent\
+├── attendance-agent.exe
+├── config.json          ← copy dari config.example.json, isi sesuai environment
+└── attendance.db         ← dibuat otomatis saat pertama kali fetch/status
+```
+
+Copy `config.example.json` dari repo ini → `config.json` di folder tsb, edit
+sesuai environment (lihat bagian [Konfigurasi](#konfigurasi) di atas), lalu
+jalankan dari `cmd`/PowerShell:
 
 ```powershell
 attendance-agent.exe status
