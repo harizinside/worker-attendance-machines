@@ -160,18 +160,16 @@ dijalankan langsung di Windows lewat `uv run agent.py <command>`. Untuk mesin
 Windows yang tidak mau install Python/uv, package jadi `.exe` standalone
 pakai [PyInstaller](https://pyinstaller.org/).
 
-### Opsi A — Download dari GitHub Actions (paling gampang)
+### Opsi A — Download dari GitHub Release (paling gampang)
 
 Repo ini punya workflow yang otomatis build `.exe` di runner Windows tiap
-push ke `main` (lihat `.github/workflows/build-windows.yml`). Untuk ambil
-hasilnya:
+push ke `main` dan mempublikasikannya ke release `latest` (lihat
+`.github/workflows/build-windows.yml`). Download langsung:
 
-1. Buka tab **Actions** di repo GitHub → pilih run terbaru dari workflow
-   "Build Windows executable".
-2. Download artifact **`attendance-agent-windows`** → berisi
-   `attendance-agent.exe`.
+**[⬇ Download attendance-agent.exe](https://github.com/harizinside/worker-attendance-machines/releases/latest/download/attendance-agent.exe)**
 
-Atau jalankan manual lewat tab Actions → pilih workflow → **Run workflow**.
+Link ini selalu mengarah ke build terbaru dari `main`. Riwayat build lain
+bisa dilihat di tab **Actions** atau **Releases**.
 
 ### Opsi B — Build manual di mesin Windows
 

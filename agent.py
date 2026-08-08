@@ -500,10 +500,62 @@ def cmd_sync_users(config: dict, machine_name: str) -> None:
         conn.close()
 
 
+# --- Interactive menu ---
+
+
+def interactive_menu(config: dict) -> None:
+    """Menu interaktif ala CLI lama (pilih 1, 2, ... lalu isi input)."""
+    menu = (
+        "\n=== Worker Attendance Machines ===\n"
+        "1. Fetch      - Tarik log dari mesin\n"
+        "2. Export     - Export data ke CSV\n"
+        "3. Delete     - Hapus log di mesin\n"
+        "4. Status     - Status mesin\n"
+        "5. Sync Users - Sync karyawan ke mesin\n"
+        "0. Keluar"
+    )
+    while True:
+        print(menu)
+        choice = input("Pilih menu: ").strip()
+
+        if choice == "1":
+            machine = input("Nama mesin (kosongkan = semua): ").strip() or None
+            cmd_fetch(config, machine)
+        elif choice == "2":
+            machine = input("Nama mesin: ").strip()
+            date_from = input("Tanggal awal (YYYY-MM-DD): ").strip()
+            date_to = input("Tanggal akhir (YYYY-MM-DD): ").strip()
+            out = input("File output CSV: ").strip()
+            cmd_export(config, machine, date_from, date_to, out)
+        elif choice == "3":
+            machine = input("Nama mesin: ").strip()
+            force = input("Force hapus walau ada unsynced? (y/N): ").strip().lower() == "y"
+            cmd_delete(config, machine, force)
+        elif choice == "4":
+            machine = input("Nama mesin (kosongkan = semua): ").strip() or None
+            cmd_status(config, machine)
+        elif choice == "5":
+            machine = input("Nama mesin: ").strip()
+            cmd_sync_users(config, machine)
+        elif choice == "0":
+            break
+        else:
+            print("Pilihan tidak valid.")
+
+
 # --- Main ---
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    if len(sys.argv) == 1:
+        interactive_menu(load_config())
+        return
+
     parser = argparse.ArgumentParser(
         description="Tool manajemen mesin absensi ZKTeco"
     )
@@ -540,13 +592,6 @@ def main() -> None:
     p_sync.add_argument("--machine", required=True, help="Nama mesin")
 
     args = parser.parse_args()
-
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-
     config = load_config()
 
     # Dispatch to command handler
