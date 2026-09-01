@@ -172,6 +172,22 @@ IP               Port   Serial               Device Name          Status
 
 **Catatan**: `scan` hanya *menampilkan* hasil (IP, serial number, dan status apakah sudah terdaftar/cocok dengan `config.json`) — tidak otomatis mengubah `config.json`. Kalau ada mesin baru atau IP berubah, tetap edit `config.json` manual berdasarkan hasil scan ini. Scan cuma menjangkau device yang satu subnet `/24` dengan komputer yang menjalankan tool; kalau mesin ada di subnet lain, pakai `--subnet`.
 
+### `update-time` — Sinkronkan waktu mesin
+
+Mengatur jam mesin ZKTeco mengikuti waktu lokal komputer yang menjalankan agent.
+Tanpa `--machine`, seluruh mesin di `config.json` akan diperbarui.
+
+```bash
+# Update semua mesin
+uv run agent.py update-time
+
+# Update satu mesin
+uv run agent.py update-time --machine "Mesin Lantai 1"
+```
+
+Mesin menyimpan tanggal dan jam sebagai wall-clock tanpa informasi timezone,
+jadi pastikan timezone komputer sudah benar sebelum menjalankan perintah ini.
+
 ## Crontab — Fetch Otomatis
 
 Tambahkan baris berikut ke crontab (`crontab -e`) untuk menarik log setiap 5 menit:

@@ -170,6 +170,39 @@ def get_device_info(ip: str, port: int = 4370, timeout: int = 10) -> OperationRe
             disconnect(conn)
 
 
+def set_device_time(
+    ip: str,
+    timestamp: datetime,
+    port: int = 4370,
+    timeout: int = 10,
+) -> OperationResult:
+    """Set waktu wall-clock device menggunakan ``timestamp`` dari agent.
+
+    Mesin ZKTeco tidak menyimpan timezone, jadi field tanggal/jam pada datetime
+    dikirim apa adanya. Returns OperationResult dan tidak membiarkan kegagalan
+    satu mesin menghentikan proses untuk mesin lain.
+    """
+    conn = None
+    try:
+        conn = connect(ip, port, timeout)
+        conn.set_time(timestamp)
+        return OperationResult(
+            success=True,
+            message=f"Device time updated to {timestamp:%Y-%m-%d %H:%M:%S}",
+            data=timestamp,
+        )
+
+    except (ConnectionError, ZKError) as exc:
+        logger.warning("set_device_time failed for %s:%d — %s", ip, port, exc)
+        return OperationResult(success=False, message=str(exc))
+    except Exception as exc:
+        logger.exception("Unexpected error in set_device_time for %s:%d", ip, port)
+        return OperationResult(success=False, message=str(exc))
+    finally:
+        if conn is not None:
+            disconnect(conn)
+
+
 def identify_device(ip: str, port: int = 4370, timeout: int = 3) -> OperationResult:
     """Konfirmasi bahwa ip:port adalah mesin ZKTeco beneran (dipakai saat scan
     jaringan) dan ambil serial_number/device_name-nya.

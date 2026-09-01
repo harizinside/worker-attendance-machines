@@ -307,6 +307,70 @@ class TestZkClientSmoke:
         assert record.punch_time.hour == 8  # wall-clock preserved, not shifted
 
 
+class TestSetDeviceTime:
+    """Test update waktu device tanpa koneksi hardware nyata."""
+
+    @patch("zk_client.disconnect")
+    @patch("zk_client.connect")
+    def test_set_device_time_calls_device_and_disconnects(self, mock_connect, mock_disconnect):
+        conn = MagicMock()
+        mock_connect.return_value = conn
+        timestamp = datetime(2026, 9, 1, 14, 30, 45)
+
+        result = zk_client.set_device_time("192.168.1.100", timestamp, 4370)
+
+        assert result.success is True
+        assert result.data == timestamp
+        conn.set_time.assert_called_once_with(timestamp)
+        mock_disconnect.assert_called_once_with(conn)
+
+    @patch("zk_client.disconnect")
+    @patch("zk_client.connect")
+    def test_set_device_time_returns_failure_and_disconnects(self, mock_connect, mock_disconnect):
+        conn = MagicMock()
+        conn.set_time.side_effect = RuntimeError("set time rejected")
+        mock_connect.return_value = conn
+
+        result = zk_client.set_device_time(
+            "192.168.1.100", datetime(2026, 9, 1, 14, 30, 45)
+        )
+
+        assert result.success is False
+        assert "rejected" in result.message
+        mock_disconnect.assert_called_once_with(conn)
+
+
+class TestCmdUpdateTime:
+    """Test orchestration update time untuk satu atau semua mesin."""
+
+    MACHINES = [
+        {"name": "Mesin 1", "ip": "192.168.1.100", "port": 4370, "serial_number": "SN001"},
+        {"name": "Mesin 2", "ip": "192.168.1.101", "port": 4370, "serial_number": "SN002"},
+    ]
+
+    @patch("agent.zk_client.set_device_time")
+    def test_updates_all_machines_and_continues_after_failure(self, mock_set_time):
+        mock_set_time.side_effect = [
+            zk_client.OperationResult(False, "offline"),
+            zk_client.OperationResult(True, "updated"),
+        ]
+
+        agent.cmd_update_time({"machines": self.MACHINES})
+
+        assert mock_set_time.call_count == 2
+        assert mock_set_time.call_args_list[0].args[0] == "192.168.1.100"
+        assert mock_set_time.call_args_list[1].args[0] == "192.168.1.101"
+
+    @patch("agent.zk_client.set_device_time")
+    def test_updates_only_selected_machine(self, mock_set_time):
+        mock_set_time.return_value = zk_client.OperationResult(True, "updated")
+
+        agent.cmd_update_time({"machines": self.MACHINES}, "Mesin 2")
+
+        mock_set_time.assert_called_once()
+        assert mock_set_time.call_args.args[0] == "192.168.1.101"
+
+
 # --- Capacity warning test ---
 
 class TestCapacityWarning:

@@ -8,6 +8,7 @@ Subcommands:
     status      - Ringkasan status per mesin
     sync-users  - Push daftar karyawan dari CMS ke mesin
     scan        - Cari mesin ZKTeco di jaringan LAN
+    update-time - Sinkronkan waktu mesin dengan komputer
 """
 
 from __future__ import annotations
@@ -614,6 +615,27 @@ def cmd_scan(config: dict, subnet: Optional[str] = None, port: int = 4370) -> No
     print(separator)
 
 
+def cmd_update_time(config: dict, machine_name: Optional[str] = None) -> None:
+    """Sinkronkan waktu satu atau semua mesin dengan wall-clock komputer."""
+    machines = get_machines(config, machine_name)
+
+    for machine in machines:
+        # Ambil waktu sedekat mungkin dengan operasi tiap perangkat agar update
+        # banyak mesin tidak memakai timestamp lama yang sama.
+        timestamp = datetime.now().replace(microsecond=0)
+        name = machine["name"]
+        serial = machine["serial_number"]
+        print(f"Updating time on {name} ({serial}) to {timestamp:%Y-%m-%d %H:%M:%S}...")
+
+        result = zk_client.set_device_time(
+            machine["ip"], timestamp, machine["port"]
+        )
+        if result.success:
+            print(f"  Success: {result.message}")
+        else:
+            print(f"  Failed: {result.message}")
+
+
 # --- Interactive menu ---
 
 
@@ -627,6 +649,7 @@ def interactive_menu(config: dict) -> None:
         "4. Status     - Status mesin\n"
         "5. Sync Users - Sync karyawan ke mesin\n"
         "6. Scan       - Cari mesin ZKTeco di jaringan\n"
+        "7. Update Time - Sinkronkan waktu mesin dengan komputer\n"
         "0. Keluar"
     )
     while True:
@@ -655,6 +678,9 @@ def interactive_menu(config: dict) -> None:
         elif choice == "6":
             subnet = input("Subnet (kosongkan = auto-detect, format 192.168.1): ").strip() or None
             cmd_scan(config, subnet)
+        elif choice == "7":
+            machine = input("Nama mesin (kosongkan = semua): ").strip() or None
+            cmd_update_time(config, machine)
         elif choice == "0":
             break
         else:
@@ -718,6 +744,12 @@ def main() -> None:
         "--port", type=int, default=4370, help="Port yang di-scan (default: 4370)"
     )
 
+    # update-time
+    p_update_time = subparsers.add_parser(
+        "update-time", help="Sinkronkan waktu mesin dengan komputer"
+    )
+    p_update_time.add_argument("--machine", help="Nama mesin (default: semua)")
+
     args = parser.parse_args()
     config = load_config()
 
@@ -734,6 +766,8 @@ def main() -> None:
         cmd_sync_users(config, args.machine)
     elif args.command == "scan":
         cmd_scan(config, args.subnet, args.port)
+    elif args.command == "update-time":
+        cmd_update_time(config, args.machine)
 
 
 if __name__ == "__main__":
