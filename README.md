@@ -105,7 +105,15 @@ uv run agent.py export \
   --out laporan_januari.csv
 ```
 
-Output CSV memiliki kolom: `finger_id`, `punch_time`, `status`.
+Kosongkan `--machine` untuk export semua mesin sekaligus ke satu file CSV, dan kosongkan `--from`/`--to` untuk export semua tanggal (tanpa batasan rentang):
+
+```bash
+uv run agent.py export --out laporan_semua.csv
+```
+
+Output CSV memiliki kolom: `machine`, `finger_id`, `punch_time`, `status`, `keterangan`.
+
+`status` adalah kode punch mentah dari mesin (0/4 = masuk, 1/5 = keluar, 2 = istirahat keluar, 3 = istirahat masuk); `keterangan` adalah label yang sudah diterjemahkan (mis. "Masuk", "Keluar").
 
 ### `delete` — Hapus log di mesin
 
@@ -138,6 +146,31 @@ Mengambil daftar karyawan dari CMS dan mendaftarkannya ke mesin ZKTeco (biometri
 ```bash
 uv run agent.py sync-users --machine "Mesin Lantai 1"
 ```
+
+### `scan` — Cari mesin ZKTeco di jaringan
+
+Scan subnet `/24` lokal (auto-detect dari IP komputer yang menjalankan tool, atau isi manual via `--subnet`) untuk mencari mesin ZKTeco yang menyala di jaringan — port default `4370`. Berguna kalau IP mesin belum diketahui atau berubah (misal karena DHCP), tanpa harus cek manual satu-satu.
+
+```bash
+# Scan subnet lokal (auto-detect), port default 4370
+uv run agent.py scan
+
+# Scan subnet tertentu / port custom
+uv run agent.py scan --subnet 192.168.1 --port 4370
+```
+
+Contoh output:
+
+```
+----------------------------------------------------------------------------------
+IP               Port   Serial               Device Name          Status
+----------------------------------------------------------------------------------
+192.168.1.100    4370   SN001                ZK-XXXX              Terdaftar (Mesin Lantai 1)
+192.168.1.150    4370   SN003                ZK-XXXX              Belum terdaftar
+----------------------------------------------------------------------------------
+```
+
+**Catatan**: `scan` hanya *menampilkan* hasil (IP, serial number, dan status apakah sudah terdaftar/cocok dengan `config.json`) — tidak otomatis mengubah `config.json`. Kalau ada mesin baru atau IP berubah, tetap edit `config.json` manual berdasarkan hasil scan ini. Scan cuma menjangkau device yang satu subnet `/24` dengan komputer yang menjalankan tool; kalau mesin ada di subnet lain, pakai `--subnet`.
 
 ## Crontab — Fetch Otomatis
 

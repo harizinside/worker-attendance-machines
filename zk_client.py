@@ -170,6 +170,37 @@ def get_device_info(ip: str, port: int = 4370, timeout: int = 10) -> OperationRe
             disconnect(conn)
 
 
+def identify_device(ip: str, port: int = 4370, timeout: int = 3) -> OperationResult:
+    """Konfirmasi bahwa ip:port adalah mesin ZKTeco beneran (dipakai saat scan
+    jaringan) dan ambil serial_number/device_name-nya.
+
+    Returns OperationResult with data={"serial_number": str, "device_name": str}
+    on success. Catches exceptions — port yang kebuka tapi bukan device ZKTeco
+    tidak boleh bikin scan lain berhenti.
+    """
+    conn = None
+    try:
+        conn = connect(ip, port, timeout)
+        return OperationResult(
+            success=True,
+            message="OK",
+            data={
+                "serial_number": conn.get_serialnumber(),
+                "device_name": conn.get_device_name(),
+            },
+        )
+
+    except (ConnectionError, ZKError) as exc:
+        logger.warning("identify_device failed for %s:%d — %s", ip, port, exc)
+        return OperationResult(success=False, message=str(exc))
+    except Exception as exc:
+        logger.exception("Unexpected error in identify_device for %s:%d", ip, port)
+        return OperationResult(success=False, message=str(exc))
+    finally:
+        if conn is not None:
+            disconnect(conn)
+
+
 def push_users(
     ip: str,
     users: list[tuple[str, str]],

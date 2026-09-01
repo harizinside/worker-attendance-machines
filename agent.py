@@ -7,6 +7,7 @@ Subcommands:
     delete      - Hapus log di mesin (guarded)
     status      - Ringkasan status per mesin
     sync-users  - Push daftar karyawan dari CMS ke mesin
+    scan        - Cari mesin ZKTeco di jaringan LAN
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 import cms_client
+import net_scan
 import store
 import wa_client
 import zk_client
@@ -86,6 +88,18 @@ def load_config(path: str = "config.json") -> dict:
     config.setdefault("offline_alert_after_cycles", 3)
 
     return config
+
+
+# Kode punch dari mesin ZKTeco (lihat zk_client.AttendanceRecord.status /
+# CMS STATUS_TO_PUNCH): 0/4 = masuk, 1/5 = keluar, 2/3 = istirahat.
+STATUS_LABELS = {
+    0: "Masuk",
+    1: "Keluar",
+    2: "Istirahat Keluar",
+    3: "Istirahat Masuk",
+    4: "Masuk",
+    5: "Keluar",
+}
 
 
 def get_machines(config: dict, machine_name: Optional[str] = None) -> list[dict]:
@@ -284,52 +298,58 @@ def cmd_fetch(config: dict, machine_name: Optional[str] = None) -> None:
 
 def cmd_export(
     config: dict,
-    machine_name: str,
-    date_from: str,
-    date_to: str,
+    machine_name: Optional[str],
+    date_from: Optional[str],
+    date_to: Optional[str],
     out_file: str,
 ) -> None:
     """Export attendance data to CSV.
 
-    Query store.query_for_export, write CSV with headers: finger_id, punch_time, status
+    If machine_name is None, export all machines into one CSV (with a
+    'machine' column to distinguish rows). If date_from/date_to are None,
+    that bound is not applied (both None = all dates). Query
+    store.query_for_export per machine, write CSV with headers:
+    machine, finger_id, punch_time, status, keterangan
     """
     conn = store.get_connection(config["db_path"])
     try:
         store.init_db(conn)
 
         machines = get_machines(config, machine_name)
-        if not machines:
-            print(f"Error: Machine '{machine_name}' not found", file=sys.stderr)
-            sys.exit(1)
 
-        machine = machines[0]
-        serial = machine["serial_number"]
-
-        rows = store.query_for_export(conn, serial, date_from, date_to)
-
-        if not rows:
-            print(
-                f"No attendance records found for {machine_name} "
-                f"between {date_from} and {date_to}"
-            )
-            return
-
+        total_rows = 0
         out_path = Path(out_file)
         with open(out_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["finger_id", "punch_time", "status"])
-            for row in rows:
-                punch_time = row["punch_time"]
-                if isinstance(punch_time, datetime):
-                    punch_str = punch_time.isoformat()
-                else:
-                    punch_str = str(punch_time)
-                writer.writerow([row["finger_id"], punch_str, row["status"]])
+            writer.writerow(
+                ["machine", "finger_id", "punch_time", "status", "keterangan"]
+            )
+            for machine in machines:
+                serial = machine["serial_number"]
+                rows = store.query_for_export(conn, serial, date_from, date_to)
+                for row in rows:
+                    punch_time = row["punch_time"]
+                    if isinstance(punch_time, datetime):
+                        punch_str = punch_time.isoformat()
+                    else:
+                        punch_str = str(punch_time)
+                    status = row["status"]
+                    keterangan = STATUS_LABELS.get(status, "?")
+                    writer.writerow(
+                        [machine["name"], row["finger_id"], punch_str, status, keterangan]
+                    )
+                total_rows += len(rows)
 
-        print(
-            f"Exported {len(rows)} records for '{machine_name}' "
-            f"({date_from} to {date_to}) to {out_file}"
-        )
+        date_range = f"{date_from or '...'} to {date_to or '...'}" if (date_from or date_to) else "all dates"
+
+        if total_rows == 0:
+            out_path.unlink(missing_ok=True)
+            scope = f"{machine_name}" if machine_name else "semua mesin"
+            print(f"No attendance records found for {scope} ({date_range})")
+            return
+
+        scope = f"'{machine_name}'" if machine_name else f"{len(machines)} mesin"
+        print(f"Exported {total_rows} records for {scope} ({date_range}) to {out_file}")
 
     finally:
         conn.close()
@@ -500,6 +520,100 @@ def cmd_sync_users(config: dict, machine_name: str) -> None:
         conn.close()
 
 
+def match_scan_results(found: list[dict], machines: list[dict]) -> list[dict]:
+    """Cocokkan hasil scan jaringan dengan mesin yang sudah terdaftar di config.
+
+    Args:
+        found: list of {"ip", "port", "serial_number", "device_name"} hasil scan.
+        machines: config["machines"].
+
+    Returns:
+        List baris untuk ditampilkan, tiap item = found item + key "status".
+    """
+    by_serial = {m["serial_number"]: m for m in machines}
+
+    rows = []
+    for item in found:
+        serial = item.get("serial_number")
+        matched = by_serial.get(serial) if serial else None
+
+        if matched is None:
+            status = "Belum terdaftar"
+        elif matched["ip"] == item["ip"]:
+            status = f"Terdaftar ({matched['name']})"
+        else:
+            status = (
+                f"IP BERUBAH — config: {matched['ip']}, ditemukan: {item['ip']} "
+                f"({matched['name']})"
+            )
+
+        rows.append({**item, "status": status})
+
+    return rows
+
+
+def cmd_scan(config: dict, subnet: Optional[str] = None, port: int = 4370) -> None:
+    """Scan jaringan LAN untuk cari mesin ZKTeco dan cocokkan dengan config.
+
+    1. Tentukan subnet (arg eksplisit atau auto-detect dari IP lokal).
+    2. TCP port sweep via net_scan.scan_port.
+    3. Untuk tiap IP yang portnya kebuka, identify_device buat konfirmasi +
+       ambil serial_number/device_name.
+    4. Cocokkan terhadap config["machines"] dan print sebagai tabel.
+    """
+    if subnet is None:
+        subnet = net_scan.get_local_subnet_prefix()
+
+    if subnet is None:
+        print(
+            "Error: Gagal deteksi subnet lokal otomatis. "
+            "Isi manual, mis. --subnet 192.168.1",
+            file=sys.stderr,
+        )
+        return
+
+    print(f"Scanning {subnet}.0/24 port {port}...")
+    open_ips = net_scan.scan_port(subnet, port)
+
+    if not open_ips:
+        print("Tidak ada mesin ditemukan.")
+        return
+
+    found = []
+    for ip in open_ips:
+        result = zk_client.identify_device(ip, port)
+        if result.success and isinstance(result.data, dict):
+            serial_number = result.data.get("serial_number")
+            device_name = result.data.get("device_name")
+        else:
+            serial_number = None
+            device_name = None
+        found.append(
+            {
+                "ip": ip,
+                "port": port,
+                "serial_number": serial_number,
+                "device_name": device_name,
+            }
+        )
+
+    rows = match_scan_results(found, config["machines"])
+
+    header = f"{'IP':<16} {'Port':<6} {'Serial':<20} {'Device Name':<20} Status"
+    separator = "-" * len(header)
+    print(separator)
+    print(header)
+    print(separator)
+    for row in rows:
+        serial = row["serial_number"] or "?"
+        device_name = row["device_name"] or "?"
+        print(
+            f"{row['ip']:<16} {row['port']:<6} {serial:<20} {device_name:<20} "
+            f"{row['status']}"
+        )
+    print(separator)
+
+
 # --- Interactive menu ---
 
 
@@ -512,6 +626,7 @@ def interactive_menu(config: dict) -> None:
         "3. Delete     - Hapus log di mesin\n"
         "4. Status     - Status mesin\n"
         "5. Sync Users - Sync karyawan ke mesin\n"
+        "6. Scan       - Cari mesin ZKTeco di jaringan\n"
         "0. Keluar"
     )
     while True:
@@ -522,9 +637,9 @@ def interactive_menu(config: dict) -> None:
             machine = input("Nama mesin (kosongkan = semua): ").strip() or None
             cmd_fetch(config, machine)
         elif choice == "2":
-            machine = input("Nama mesin: ").strip()
-            date_from = input("Tanggal awal (YYYY-MM-DD): ").strip()
-            date_to = input("Tanggal akhir (YYYY-MM-DD): ").strip()
+            machine = input("Nama mesin (kosongkan = semua): ").strip() or None
+            date_from = input("Tanggal awal (YYYY-MM-DD, kosongkan = semua): ").strip() or None
+            date_to = input("Tanggal akhir (YYYY-MM-DD, kosongkan = semua): ").strip() or None
             out = input("File output CSV: ").strip()
             cmd_export(config, machine, date_from, date_to, out)
         elif choice == "3":
@@ -537,6 +652,9 @@ def interactive_menu(config: dict) -> None:
         elif choice == "5":
             machine = input("Nama mesin: ").strip()
             cmd_sync_users(config, machine)
+        elif choice == "6":
+            subnet = input("Subnet (kosongkan = auto-detect, format 192.168.1): ").strip() or None
+            cmd_scan(config, subnet)
         elif choice == "0":
             break
         else:
@@ -567,12 +685,12 @@ def main() -> None:
 
     # export
     p_export = subparsers.add_parser("export", help="Export data ke CSV")
-    p_export.add_argument("--machine", required=True, help="Nama mesin")
+    p_export.add_argument("--machine", help="Nama mesin (default: semua)")
     p_export.add_argument(
-        "--from", dest="date_from", required=True, help="Tanggal awal (YYYY-MM-DD)"
+        "--from", dest="date_from", help="Tanggal awal (YYYY-MM-DD, default: semua tanggal)"
     )
     p_export.add_argument(
-        "--to", dest="date_to", required=True, help="Tanggal akhir (YYYY-MM-DD)"
+        "--to", dest="date_to", help="Tanggal akhir (YYYY-MM-DD, default: semua tanggal)"
     )
     p_export.add_argument("--out", required=True, help="File output CSV")
 
@@ -591,6 +709,15 @@ def main() -> None:
     p_sync = subparsers.add_parser("sync-users", help="Sync karyawan ke mesin")
     p_sync.add_argument("--machine", required=True, help="Nama mesin")
 
+    # scan
+    p_scan = subparsers.add_parser("scan", help="Cari mesin ZKTeco di jaringan")
+    p_scan.add_argument(
+        "--subnet", help="Subnet 3-oktet, mis. 192.168.1 (default: auto-detect)"
+    )
+    p_scan.add_argument(
+        "--port", type=int, default=4370, help="Port yang di-scan (default: 4370)"
+    )
+
     args = parser.parse_args()
     config = load_config()
 
@@ -605,6 +732,8 @@ def main() -> None:
         cmd_status(config, args.machine)
     elif args.command == "sync-users":
         cmd_sync_users(config, args.machine)
+    elif args.command == "scan":
+        cmd_scan(config, args.subnet, args.port)
 
 
 if __name__ == "__main__":

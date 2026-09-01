@@ -9,6 +9,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 import requests
 
+import agent
 import store
 import cms_client
 import wa_client
@@ -325,3 +326,40 @@ class TestCapacityWarning:
         attendance_count = 899
         usage_pct = (attendance_count / rec_capacity * 100) if rec_capacity > 0 else 0
         assert usage_pct < capacity_warning_pct  # should NOT trigger warning
+
+
+# --- Scan matching test ---
+
+class TestScanMatching:
+    """Test match_scan_results() — matches network scan output against config."""
+
+    MACHINES = [
+        {"name": "Mesin Lantai 1", "ip": "192.168.1.100", "port": 4370, "serial_number": "SN001"},
+        {"name": "Mesin Lantai 2", "ip": "192.168.1.101", "port": 4370, "serial_number": "SN002"},
+    ]
+
+    def test_matched_same_ip(self):
+        """Serial found in config with the same IP -> registered."""
+        found = [{"ip": "192.168.1.100", "port": 4370, "serial_number": "SN001", "device_name": "ZK"}]
+        rows = agent.match_scan_results(found, self.MACHINES)
+        assert rows[0]["status"] == "Terdaftar (Mesin Lantai 1)"
+
+    def test_matched_different_ip(self):
+        """Serial found in config but IP differs -> flagged as changed."""
+        found = [{"ip": "192.168.1.200", "port": 4370, "serial_number": "SN001", "device_name": "ZK"}]
+        rows = agent.match_scan_results(found, self.MACHINES)
+        assert "IP BERUBAH" in rows[0]["status"]
+        assert "192.168.1.100" in rows[0]["status"]  # old (config) IP
+        assert "192.168.1.200" in rows[0]["status"]  # new (found) IP
+
+    def test_unknown_serial(self):
+        """Serial not present in config -> not registered."""
+        found = [{"ip": "192.168.1.150", "port": 4370, "serial_number": "SN999", "device_name": "ZK"}]
+        rows = agent.match_scan_results(found, self.MACHINES)
+        assert rows[0]["status"] == "Belum terdaftar"
+
+    def test_unreadable_serial(self):
+        """serial_number None (device didn't respond to identify) -> not registered."""
+        found = [{"ip": "192.168.1.150", "port": 4370, "serial_number": None, "device_name": None}]
+        rows = agent.match_scan_results(found, self.MACHINES)
+        assert rows[0]["status"] == "Belum terdaftar"

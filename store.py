@@ -131,25 +131,28 @@ def unsynced_count(
 def query_for_export(
     conn: sqlite3.Connection,
     machine_serial: str,
-    date_from: str,
-    date_to: str,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
 ) -> list[dict]:
-    """Query logs for export, filtered by machine and date range (inclusive).
+    """Query logs for export, filtered by machine and optional date range (inclusive).
 
-    date_from/date_to are 'YYYY-MM-DD' strings.
+    date_from/date_to are 'YYYY-MM-DD' strings. Either or both may be None,
+    in which case that bound is not applied (None/None = all dates).
     Returns list of dicts with: finger_id, punch_time, status.
     """
-    cursor = conn.execute(
-        """
-        SELECT finger_id, punch_time, status
-        FROM attendance_logs
-        WHERE machine_serial = ?
-          AND punch_time >= ?
-          AND punch_time <  ? || 'T23:59:59.999999+00:00'
-        ORDER BY punch_time ASC
-        """,
-        (machine_serial, date_from, date_to),
-    )
+    query = "SELECT finger_id, punch_time, status FROM attendance_logs WHERE machine_serial = ?"
+    params: list = [machine_serial]
+
+    if date_from:
+        query += " AND punch_time >= ?"
+        params.append(date_from)
+    if date_to:
+        query += " AND punch_time < ? || 'T23:59:59.999999+00:00'"
+        params.append(date_to)
+
+    query += " ORDER BY punch_time ASC"
+
+    cursor = conn.execute(query, params)
     return [dict(row) for row in cursor.fetchall()]
 
 
