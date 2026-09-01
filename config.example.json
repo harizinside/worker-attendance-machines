@@ -2,13 +2,6 @@
   "cms_base_url": "https://cms.example.com",
   "db_path": "attendance.db",
   "capacity_warning_pct": 90,
-  "offline_alert_after_cycles": 3,
-  "waha": {
-    "api_url": "http://localhost:3001/api",
-    "api_key": "",
-    "session": "default",
-    "alert_phone": "62812xxxxxxx"
-  },
   "machines": [
     {
       "name": "Mesin Lantai 1",

@@ -12,7 +12,6 @@ import requests
 import agent
 import store
 import cms_client
-import wa_client
 import zk_client
 
 
@@ -101,66 +100,6 @@ class TestStore:
         assert state is not None
         assert state["consecutive_fail_count"] == 3
 
-    def test_should_alert_once_per_incident(self, db):
-        """should_alert returns True only once per offline incident."""
-        # Simulate 3 consecutive failures with threshold=3
-        store.record_fetch_result(db, "SN001", False)
-        store.record_fetch_result(db, "SN001", False)
-        store.record_fetch_result(db, "SN001", False)
-
-        assert store.should_alert(db, "SN001", 3) is True
-
-        # After recording alert, should NOT alert again
-        store.record_alert_sent(db, "SN001")
-        assert store.should_alert(db, "SN001", 3) is False
-
-        # More failures still don't trigger new alert (same incident)
-        store.record_fetch_result(db, "SN001", False)
-        store.record_fetch_result(db, "SN001", False)
-        assert store.should_alert(db, "SN001", 3) is False
-
-    def test_record_alert_sent_preserves_other_columns(self, db):
-        """record_alert_sent must not wipe last_fetch_ok_at / consecutive_fail_count.
-
-        Regression test: an earlier implementation used INSERT OR REPLACE with
-        only (machine_serial, last_alert_sent_at), which deletes+reinserts the
-        row on conflict and silently resets the omitted columns to defaults.
-        """
-        store.record_fetch_result(db, "SN001", True)  # sets last_fetch_ok_at
-        store.record_fetch_result(db, "SN001", False)
-        store.record_fetch_result(db, "SN001", False)
-        state_before = store.get_machine_state(db, "SN001")
-        assert state_before is not None
-        assert state_before["last_fetch_ok_at"] is not None
-        assert state_before["consecutive_fail_count"] == 2
-
-        store.record_alert_sent(db, "SN001")
-
-        state_after = store.get_machine_state(db, "SN001")
-        assert state_after is not None
-        assert state_after["last_alert_sent_at"] is not None
-        assert state_after["last_fetch_ok_at"] == state_before["last_fetch_ok_at"]
-        assert state_after["consecutive_fail_count"] == 2
-
-    def test_should_alert_resets_after_recovery(self, db):
-        """After machine recovers, next offline incident can trigger new alert."""
-        # First incident
-        store.record_fetch_result(db, "SN001", False)
-        store.record_fetch_result(db, "SN001", False)
-        store.record_fetch_result(db, "SN001", False)
-        assert store.should_alert(db, "SN001", 3) is True
-        store.record_alert_sent(db, "SN001")
-
-        # Machine recovers
-        store.record_fetch_result(db, "SN001", True)
-
-        # Second incident
-        store.record_fetch_result(db, "SN001", False)
-        store.record_fetch_result(db, "SN001", False)
-        store.record_fetch_result(db, "SN001", False)
-        assert store.should_alert(db, "SN001", 3) is True
-
-
 # --- CMS client tests ---
 
 class TestCmsClient:
@@ -219,57 +158,6 @@ class TestCmsClient:
         emp0 = data[0]
         assert isinstance(emp0, dict)
         assert emp0["fingerId"] == "EMP001"
-
-
-# --- WA client tests ---
-
-class TestWaClient:
-    """Test WhatsApp client."""
-
-    @patch("wa_client.requests.post")
-    def test_send_text(self, mock_post):
-        """Send text with correct payload."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
-
-        cfg = {
-            "api_url": "http://localhost:3001/api",
-            "api_key": "test-key",
-            "session": "default",
-            "alert_phone": "628123456789",
-        }
-        success, msg = wa_client.send_text(cfg, "Test alert")
-
-        assert success is True
-        call_args = mock_post.call_args
-        # Verify URL
-        assert "/sendText" in call_args[0][0]
-        # Verify body
-        body = call_args[1].get("json", {})
-        assert body["session"] == "default"
-        assert body["chatId"] == "628123456789@c.us"
-        assert body["text"] == "Test alert"
-
-    @patch("wa_client.requests.post")
-    def test_send_text_no_api_key(self, mock_post):
-        """When api_key is empty, no X-Api-Key header is sent."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
-
-        cfg = {
-            "api_url": "http://localhost:3001/api",
-            "api_key": "",
-            "session": "default",
-            "alert_phone": "628123456789",
-        }
-        success, msg = wa_client.send_text(cfg, "Test")
-        assert success is True
-        # Verify no X-Api-Key in headers
-        call_args = mock_post.call_args
-        headers = call_args[1].get("headers", {})
-        assert "X-Api-Key" not in headers or headers.get("X-Api-Key") is None
 
 
 # --- zk_client smoke tests ---

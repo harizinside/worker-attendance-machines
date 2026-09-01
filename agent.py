@@ -25,9 +25,7 @@ from typing import Optional
 import cms_client
 import net_scan
 import store
-import wa_client
 import zk_client
-from store import should_alert
 from zk_client import DeviceInfo
 
 logger = logging.getLogger(__name__)
@@ -86,7 +84,6 @@ def load_config(path: str = "config.json") -> dict:
 
     # Set defaults for optional top-level keys
     config.setdefault("capacity_warning_pct", 90)
-    config.setdefault("offline_alert_after_cycles", 3)
 
     return config
 
@@ -147,18 +144,14 @@ def cmd_fetch(config: dict, machine_name: Optional[str] = None) -> None:
     5. get_device_info, check capacity vs capacity_warning_pct, log warning if exceeded
     6. record_fetch_result(ok=True)
     7. If pull_logs failed: record_fetch_result(ok=False)
-       - Check should_alert(threshold=offline_alert_after_cycles)
-       - If should alert: send WA via wa_client, record_alert_sent
     """
     conn = store.get_connection(config["db_path"])
     try:
         store.init_db(conn)
 
         machines = get_machines(config, machine_name)
-        threshold = config.get("offline_alert_after_cycles", 3)
         capacity_warning_pct = config.get("capacity_warning_pct", 90)
         cms_base_url = config["cms_base_url"]
-        waha_cfg = config.get("waha")
 
         for machine in machines:
             serial = machine["serial_number"]
@@ -260,36 +253,9 @@ def cmd_fetch(config: dict, machine_name: Optional[str] = None) -> None:
                 # Step 7: Pull failed
                 print(f"  FAILED: {result.message}")
                 store.record_fetch_result(conn, serial, False)
-
-                # Check if we should alert
-                if should_alert(conn, serial, threshold):
-                    last_ok_at = store.get_machine_state(conn, serial)
-                    if last_ok_at and last_ok_at.get("last_fetch_ok_at"):
-                        last_ok_str = last_ok_at["last_fetch_ok_at"]
-                    else:
-                        last_ok_str = "never"
-
-                    fc_val = last_ok_at["consecutive_fail_count"] if last_ok_at else 0
-                    alert_text = (
-                        f"ALERT: Mesin {name} ({serial}) tidak reachable "
-                        f"sejak {last_ok_str}. "
-                        f"Konsekutif gagal: {fc_val} cycle."
-                    )
-
-                    if waha_cfg:
-                        ok, wa_msg = wa_client.send_text(waha_cfg, alert_text)
-                        if ok:
-                            store.record_alert_sent(conn, serial)
-                            print(f"  Alert sent via WA: {wa_msg}")
-                        else:
-                            print(f"  Failed to send WA alert: {wa_msg}")
-                    else:
-                        print(f"  Would alert: {alert_text}")
-                        print(f"  (waha config not set)")
-                else:
-                    fail_count = store.get_machine_state(conn, serial)
-                    fc = fail_count["consecutive_fail_count"] if fail_count else 0
-                    print(f"  Consecutive failures: {fc} (alert threshold: {threshold})")
+                state = store.get_machine_state(conn, serial)
+                fail_count = state["consecutive_fail_count"] if state else 0
+                print(f"  Consecutive failures: {fail_count}")
 
         conn.commit()
 

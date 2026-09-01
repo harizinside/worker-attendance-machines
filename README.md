@@ -1,13 +1,12 @@
 # Worker Attendance Machines
 
-Tool CLI untuk manajemen data mesin absensi ZKTeco. Menarik log punch dari mesin, menyimpannya secara lokal di SQLite, lalu mendorongnya ke CMS pusat (`deneire-cms`). Dilengkapi juga dengan alert WhatsApp via WAHA saat mesin offline dan peringatan kapasitas perangkat.
+Tool CLI untuk manajemen data mesin absensi ZKTeco. Menarik log punch dari mesin, menyimpannya secara lokal di SQLite, lalu mendorongnya ke CMS pusat (`deneire-cms`). Dilengkapi juga dengan peringatan kapasitas perangkat.
 
 ## Prasyarat
 
 - **Python 3.14** (lihat `.python-version`, saat ini `3.14.6`)
 - Akses jaringan LAN ke mesin ZKTeco (port default `4370`)
 - **deneire-cms** sudah deploy endpoint `/iclock/employees` dan `/iclock/cdata`
-- (Opsional) **WAHA** (WhatsApp HTTP API) sudah berjalan untuk fitur alert
 
 ## Instalasi
 
@@ -26,13 +25,6 @@ Salin `config.example.json` menjadi `config.json`, lalu sesuaikan nilai-nilainya
   "cms_base_url": "https://cms.example.com",
   "db_path": "attendance.db",
   "capacity_warning_pct": 90,
-  "offline_alert_after_cycles": 3,
-  "waha": {
-    "api_url": "http://localhost:3001/api",
-    "api_key": "",
-    "session": "default",
-    "alert_phone": "62812xxxxxxx"
-  },
   "machines": [
     {
       "name": "Mesin Lantai 1",
@@ -51,11 +43,6 @@ Salin `config.example.json` menjadi `config.json`, lalu sesuaikan nilai-nilainya
 | `cms_base_url` | Ya | Base URL deneire-cms (contoh: `https://hris.perusahaan.com`) |
 | `db_path` | Ya | Path file database SQLite lokal untuk menyimpan log sementara |
 | `capacity_warning_pct` | Tidak | Persentase batas peringatan kapasitas perangkat (default: `90`). Jika jumlah log mencapai persentase ini, akan muncul warning |
-| `offline_alert_after_cycles` | Tidak | Jumlah siklus fetch berturut-turut gagal sebelum mengirim alert WA (default: `3`) |
-| `waha.api_url` | Tidak | URL endpoint WAHA (contoh: `http://localhost:3001/api`) |
-| `waha.api_key` | Tidak | API key WAHA jika diperlukan. Kosongkan jika tidak ada autentikasi |
-| `waha.session` | Tidak | Nama session WAHA (default: `"default"`) |
-| `waha.alert_phone` | Tidak | Nomor tujuan alert WhatsApp (format: `628xxxxxxxxxx`) |
 | `machines` | Ya | Array daftar mesin. Setiap entry punya: |
 | &nbsp;&nbsp;`name` | Ya | Nama label mesin (bebas, untuk identifikasi) |
 | &nbsp;&nbsp;`ip` | Ya | Alamat IP mesin ZKTeco di jaringan LAN |
@@ -91,7 +78,6 @@ Alur:
 3. Push log yang belum sinkron ke CMS
 4. Cek kapasitas perangkat dan tampilkan warning jika mendekati batas
 5. Catat hasil fetch (sukses/gagal)
-6. Jika gagal berturut-turut melebihi threshold → kirim alert WhatsApp
 
 ### `export` — Export data ke CSV
 
@@ -275,8 +261,8 @@ attendance-agent.exe export --machine "Mesin Lantai 1" --from 2025-01-01 --to 20
 
 ### Keamanan `config.json`
 
-`config.json` berisi kredensial (`waha.api_key`) dan detail jaringan
-internal (IP mesin, URL CMS) dalam bentuk plaintext — file ini **tidak**
+`config.json` berisi detail jaringan internal (IP mesin, URL CMS) dalam
+bentuk plaintext — file ini **tidak**
 ikut ter-bundle ke dalam `.exe` (PyInstaller cuma bundle kode), jadi aman
 untuk di-share/copy `.exe`-nya ke mesin lain. Tapi tetap perhatikan:
 
@@ -292,47 +278,23 @@ untuk di-share/copy `.exe`-nya ke mesin lain. Tapi tetap perhatikan:
 ### Alur `fetch`
 
 ```
-┌──────────────┐     pull_logs      ┌──────────────┐
-│  Mesin ZKTeco │ ────────────────→ │  agent.py    │
-│              │                    │              │
-└──────────────┘                    │  SQLite DB   │
-                                    │              │
-                         ┌──────────┴──────┐       │
-                         │  Success?       │       │
-                         └──┬──────────┬───┘       │
-                        Yes│          │No         │
-                   ┌───────▼──┐  ┌────▼──────┐    │
-                   │ Upsert   │  │ record     │    │
-                   │ to local │  │ fail +     │    │
-                   │ store    │  │ check alert│    │
-                   └────┬─────┘  └────┬──────┘    │
-                        │             │            │
-                   ┌────▼─────┐  ┌────▼──────┐    │
-                   │ Push ke  │  │ Threshold  │    │
-                   │ CMS      │  │ tercapai?  │    │
-                   └────┬─────┘  └────┬──────┘    │
-                        │             │Yes         │
-                   mark_pushed   ┌────▼──────┐    │
-                                │ Kirim WA   │    │
-                                │ alert      │    │
-                                └────────────┘    │
-                        ┌────────▼────────────────▼──┐
-                        │  Check capacity ≥ warning% │
-                        └────────────────────────────┘
+Mesin ZKTeco ──pull_logs──> agent.py
+                               │
+                    ┌──────────┴──────────┐
+                  sukses                gagal
+                    │                     │
+            simpan ke SQLite      catat fetch gagal
+                    │
+              push ke CMS
+                    │
+              mark_pushed
+                    │
+              cek kapasitas
 ```
 
 ### Guard `delete`
 
 Perintah `delete` memeriksa apakah ada log yang belum disinkronkan (`pushed_to_cms = 0`). Jika ada, operasi ditolak kecuali flag `--force` diberikan. Ini mencegah kehilangan data yang belum terbackup ke CMS.
-
-### Alert Logic
-
-Alert WhatsApp dikirim **sekali per insiden**, bukan setiap siklus gagal:
-
-1. Gagal fetch berturut-turut mencapai `offline_alert_after_cycles` → kirim alert pertama
-2. Selama mesin tetap offline, alert **tidak** dikirim lagi (mencegah spam)
-3. Saat mesin kembali online (`record_fetch_result(ok=True)`), counter reset
-4. Jika mesin offline lagi nanti, alert baru bisa dikirim (insiden baru)
 
 ## Troubleshooting
 
@@ -349,13 +311,6 @@ Alert WhatsApp dikirim **sekali per insiden**, bukan setiap siklus gagal:
 - Periksa koneksi jaringan antara server dan CMS
 - Lihat log aplikasi (`agent.log`) untuk detail error HTTP
 - Pastikan `cms_base_url` di config tidak memiliki trailing slash
-
-### WA alert tidak terkirim
-
-- Pastikan WAHA berjalan: `curl http://localhost:3001/api/status`
-- Verifikasi `waha.api_url` dan `waha.alert_phone` di config benar
-- Jika menggunakan API key, pastikan `waha.api_key` diisi dengan benar
-- Periksa log untuk pesan error dari WAHA
 
 ### Database corrupt
 
