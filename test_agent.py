@@ -3,6 +3,7 @@
 import csv
 import io
 import sqlite3
+import logging
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
@@ -13,6 +14,20 @@ import agent
 import store
 import cms_client
 import zk_client
+
+
+class TestLogging:
+    """Error tetap tersedia setelah console Windows tertutup."""
+
+    def test_setup_logging_writes_rotating_file(self, tmp_path):
+        with patch("agent._default_log_dir", return_value=tmp_path):
+            log_path = agent.setup_logging()
+            logging.getLogger("test").error("contoh error windows")
+            for handler in logging.getLogger().handlers:
+                handler.flush()
+
+        assert log_path == tmp_path / "attendance-agent.log"
+        assert "contoh error windows" in log_path.read_text(encoding="utf-8")
 
 
 # --- Store tests ---

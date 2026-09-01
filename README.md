@@ -246,6 +246,19 @@ attendance-agent.exe fetch
 attendance-agent.exe export --machine "Mesin Lantai 1" --from 2025-01-01 --to 2025-01-31 --out laporan.csv
 ```
 
+### File log untuk laporan error
+
+Setiap kali aplikasi dijalankan, output diagnostik dan crash yang tidak
+tertangani otomatis ditulis ke `attendance-agent.log`. Pada Windows file ini
+normalnya berada di folder yang sama dengan `attendance-agent.exe`, jadi cukup
+kirim file tersebut saat melaporkan error.
+
+Jika folder exe tidak bisa ditulis (misalnya berada di `Program Files`), log
+disimpan di `%LOCALAPPDATA%\AttendanceAgent\attendance-agent.log`. Log dibatasi
+5 MB dan maksimal tiga file lama (`.log.1` sampai `.log.3`) agar disk tidak
+penuh. Informasi versi Python, Windows, working directory, dan traceback crash
+ikut dicatat; `config.json` dan isi database tidak disalin ke log.
+
 ### Task Scheduler — pengganti crontab
 
 1. Buka **Task Scheduler** → **Create Basic Task**.

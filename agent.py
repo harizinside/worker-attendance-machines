@@ -17,6 +17,9 @@ import argparse
 import csv
 import json
 import logging
+import logging.handlers
+import os
+import platform
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +32,55 @@ import zk_client
 from zk_client import DeviceInfo
 
 logger = logging.getLogger(__name__)
+
+LOG_FILE_NAME = "attendance-agent.log"
+
+
+def _default_log_dir() -> Path:
+    """Pilih folder log yang writable dan mudah ditemukan oleh user Windows."""
+    if getattr(sys, "frozen", False):
+        preferred = Path(sys.executable).resolve().parent
+    else:
+        preferred = Path.cwd()
+
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        probe = preferred / ".attendance-agent-write-test"
+        probe.touch(exist_ok=True)
+        probe.unlink()
+        return preferred
+    except OSError:
+        # Misalnya exe dijalankan dari Program Files. LOCALAPPDATA lazimnya
+        # writable tanpa hak administrator.
+        fallback = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "AttendanceAgent"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+def setup_logging() -> Path:
+    """Log ke console dan file berotasi; kembalikan lokasi file log."""
+    log_path = _default_log_dir() / LOG_FILE_NAME
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.handlers.clear()
+
+    console = logging.StreamHandler()
+    console.setFormatter(formatter)
+    root.addHandler(console)
+
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_path,
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(formatter)
+    root.addHandler(file_handler)
+    return log_path
 
 # --- Config ---
 
@@ -657,10 +709,16 @@ def interactive_menu(config: dict) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    log_path = setup_logging()
+    logger.info(
+        "Agent started | version=%s | python=%s | platform=%s | frozen=%s | cwd=%s",
+        "0.1.0",
+        platform.python_version(),
+        platform.platform(),
+        bool(getattr(sys, "frozen", False)),
+        Path.cwd(),
     )
+    logger.info("Log file: %s", log_path)
 
     if len(sys.argv) == 1:
         interactive_menu(load_config())
@@ -737,4 +795,16 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Dihentikan oleh user")
+        raise SystemExit(130)
+    except Exception:
+        logger.exception("Fatal error yang tidak tertangani")
+        print(
+            f"\nTerjadi error. Kirim file log ini untuk diperiksa:\n"
+            f"  {_default_log_dir() / LOG_FILE_NAME}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
