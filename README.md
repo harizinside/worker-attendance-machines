@@ -201,7 +201,7 @@ Repo ini punya workflow yang otomatis build `.exe` di runner Windows tiap
 push ke `main` dan mempublikasikannya ke release `latest` (lihat
 `.github/workflows/build-windows.yml`). Download langsung:
 
-**[⬇ Download attendance-agent.exe](https://github.com/harizinside/worker-attendance-machines/releases/latest/download/attendance-agent.exe)**
+**[⬇ Download attendance-agent-windows.zip](https://github.com/harizinside/worker-attendance-machines/releases/latest/download/attendance-agent-windows.zip)**
 
 Link ini selalu mengarah ke build terbaru dari `main`. Riwayat build lain
 bisa dilihat di tab **Actions** atau **Releases**.
@@ -215,30 +215,43 @@ Prasyarat: Python 3.14 + [uv](https://docs.astral.sh/uv/) terinstall.
 
 ```powershell
 uv sync --group dev
-uv run pyinstaller --onefile --name attendance-agent agent.py
+uv run pyinstaller --onedir --name attendance-agent agent.py
+Copy-Item config.example.json dist\attendance-agent\config.example.json
+Compress-Archive -Path dist\attendance-agent -DestinationPath dist\attendance-agent-windows.zip
 ```
 
-Hasilnya ada di `dist\attendance-agent.exe`.
+Hasilnya ada di `dist\attendance-agent-windows.zip`.
 
 > Kalau versi PyInstaller yang ter-install belum support Python 3.14 (rilis
 > masih baru), build pakai Python 3.13 di venv Windows sebagai fallback.
 
 ### Cara pakai `.exe`
 
+Extract `attendance-agent-windows.zip` seluruhnya. Jangan memindahkan
+`attendance-agent.exe` keluar dari folder hasil extract karena folder
+`_internal` berisi DLL dan modul Python yang dibutuhkan aplikasi.
+
+Build menggunakan mode PyInstaller `--onedir`, bukan `--onefile`. Dengan begitu
+DLL seperti `_sqlite3.pyd` dimuat dari folder aplikasi dan tidak diekstrak ke
+`%TEMP%\_MEI...`, yang dapat diblokir Windows Application Control pada komputer
+kantor.
+
 `config.json`/`db_path` di-resolve relatif ke *working directory* saat exe
-dijalankan (sama seperti versi `uv run`) — jadi taruh `attendance-agent.exe`
-dan `config.json` di folder yang sama, misalnya:
+dijalankan (sama seperti versi `uv run`). Rename `config.example.json` menjadi
+`config.json`, lalu edit konfigurasinya. Struktur foldernya seperti ini:
 
 ```
 C:\AttendanceAgent\
-├── attendance-agent.exe
-├── config.json          ← copy dari config.example.json, isi sesuai environment
-└── attendance.db         ← dibuat otomatis saat pertama kali fetch/status
+└── attendance-agent\
+    ├── attendance-agent.exe
+    ├── config.example.json
+    ├── config.json          ← rename/copy example, isi sesuai environment
+    ├── attendance.db        ← dibuat otomatis saat pertama kali fetch/status
+    └── _internal\           ← wajib tetap bersama exe
 ```
 
-Copy `config.example.json` dari repo ini → `config.json` di folder tsb, edit
-sesuai environment (lihat bagian [Konfigurasi](#konfigurasi) di atas), lalu
-jalankan dari `cmd`/PowerShell:
+Edit `config.json` sesuai environment (lihat bagian
+[Konfigurasi](#konfigurasi) di atas), lalu jalankan dari `cmd`/PowerShell:
 
 ```powershell
 attendance-agent.exe status

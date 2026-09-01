@@ -18,12 +18,23 @@ jobs:
 
       - run: uv sync --group dev
 
-      - run: uv run pyinstaller --onefile --name attendance-agent agent.py
+      # Use onedir so native modules (notably _sqlite3.pyd) are loaded from
+      # the application folder. In onefile mode PyInstaller extracts them to
+      # %TEMP%\_MEI*, which is blocked by Windows Application Control on some
+      # managed computers.
+      - name: Build one-folder application
+        run: uv run pyinstaller --onedir --name attendance-agent agent.py
+
+      - name: Package Windows application
+        shell: pwsh
+        run: |
+          Copy-Item config.example.json dist/attendance-agent/config.example.json
+          Compress-Archive -Path dist/attendance-agent -DestinationPath dist/attendance-agent-windows.zip
 
       - uses: actions/upload-artifact@v7
         with:
           name: attendance-agent-windows
-          path: dist/attendance-agent.exe
+          path: dist/attendance-agent-windows.zip
 
       - name: Publish rolling "latest" release
         if: github.ref == 'refs/heads/main'
@@ -31,6 +42,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag 2>$null
-          gh release create latest dist/attendance-agent.exe `
+          gh release create latest dist/attendance-agent-windows.zip `
             --title "Latest build" `
             --notes "Automatic build from main (commit ${{ github.sha }})"
